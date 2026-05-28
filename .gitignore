@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Debug screenshots (lokaal, niet in repo)
+debug_*.png
+
+# OS
+.DS_Store
+Thumbs.db
