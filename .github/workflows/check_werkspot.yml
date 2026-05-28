@@ -65,9 +65,8 @@ jobs:
         with:
           name: debug-${{ github.run_number }}
           path: |
-            debug_leads.png
-            debug_page_text.txt
             debug_*.png
+            debug_*.txt
           retention-days: 3
 
       - name: Commit bijgewerkte seen_jobs.json
