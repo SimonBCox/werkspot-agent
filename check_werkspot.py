@@ -169,11 +169,11 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
         )
         context = await browser.new_context(
             user_agent=(
-                'Mozilla/5.0 (Linux; Android 13; Pixel 7) '
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Mobile Safari/537.36'
+                'Chrome/124.0.0.0 Safari/537.36'
             ),
-            viewport={'width': 390, 'height': 844},
+            viewport={'width': 1280, 'height': 900},
             locale='nl-NL',
         )
 
@@ -198,20 +198,40 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                     await context.add_cookies(cookies)
                     print(f"   {len(cookies)} cookies geladen")
 
-                    # Direct naar leads — al ingelogd?
+                    # Ga naar de leads-pagina (desktop URL)
                     await page.goto(
                         'https://www.werkspot.nl/service-pro/new-service-requests',
                         wait_until='domcontentloaded',
                         timeout=20_000,
                     )
                     await page.wait_for_load_state('networkidle', timeout=10_000)
+                    await asyncio.sleep(2)
 
+                    # Debug: bewaar wat we zien op de cookie-pagina
+                    await page.screenshot(path='debug_cookie.png', full_page=True)
                     body = await page.evaluate('() => document.body.innerText')
-                    if 'inloggen' not in page.url and 'kunnen deze pagina niet vinden' not in body:
+                    with open('debug_cookie_text.txt', 'w') as f:
+                        f.write(body[:4000])
+                    print(f"📍 Cookie-pagina URL: {page.url}")
+
+                    # Succescheck: niet op inlogpagina én geen 404
+                    on_login   = 'inloggen' in page.url.lower()
+                    is_404     = 'kunnen deze pagina niet vinden' in body
+                    if not on_login and not is_404:
                         print(f"✅ Ingelogd via cookies: {page.url}")
                         logged_in = True
                     else:
-                        print("⚠️  Cookies verlopen of ongeldig — terug naar wachtwoordlogin")
+                        print(f"⚠️  Cookie-check faalde (login={on_login}, 404={is_404})")
+                        print("   Toch even controleren of we eigenlijk wel ingelogd zijn...")
+                        # Soms is de sessie geldig maar de URL anders.
+                        # Check op homepage of we als gebruiker herkend worden.
+                        await page.goto('https://www.werkspot.nl/', wait_until='domcontentloaded', timeout=15_000)
+                        home_body = await page.evaluate('() => document.body.innerText')
+                        if 'Uitloggen' in home_body or 'Mijn Werkspot' in home_body or 'aangemeld als' in home_body:
+                            print("✅ Sessie is geldig (herkend op homepage) — toch ingelogd")
+                            logged_in = True
+                        else:
+                            print("❌ Cookies lijken echt verlopen")
                 except Exception as e:
                     print(f"⚠️  Cookie-login mislukt: {e}")
 
