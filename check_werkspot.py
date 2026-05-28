@@ -129,28 +129,46 @@ def send_notification(topic: str, job: dict):
 def _parse_cookies(raw: str) -> list[dict]:
     """
     Zet een geëxporteerde cookie-JSON (van de 'Cookie-Editor' extensie)
-    om naar het formaat dat Playwright verwacht.
+    om naar het formaat dat Playwright verwacht. Slaat ongeldige
+    entries over in plaats van de hele lijst te laten falen.
     """
     data = json.loads(raw)
     cookies = []
     for c in data:
+        try:
+            name = c['name']
+            value = c['value']
+        except (KeyError, TypeError):
+            continue  # geen naam/waarde → overslaan
+
         cookie = {
-            'name':   c['name'],
-            'value':  c['value'],
+            'name':   name,
+            'value':  value,
             'domain': c.get('domain', '.werkspot.nl'),
             'path':   c.get('path', '/'),
         }
-        # expirationDate (Cookie-Editor) → expires (Playwright)
         if 'expirationDate' in c and c['expirationDate']:
-            cookie['expires'] = int(c['expirationDate'])
-        cookie['secure']   = bool(c.get('secure', True))
+            try:
+                cookie['expires'] = int(c['expirationDate'])
+            except (ValueError, TypeError):
+                pass
+
         cookie['httpOnly'] = bool(c.get('httpOnly', False))
+
         # sameSite normaliseren
         ss = str(c.get('sameSite', 'Lax')).lower()
-        cookie['sameSite'] = {
+        same_site = {
             'lax': 'Lax', 'strict': 'Strict', 'none': 'None',
             'no_restriction': 'None', 'unspecified': 'Lax',
         }.get(ss, 'Lax')
+        cookie['sameSite'] = same_site
+
+        # Chromium-regel: sameSite=None vereist secure=True
+        secure = bool(c.get('secure', True))
+        if same_site == 'None':
+            secure = True
+        cookie['secure'] = secure
+
         cookies.append(cookie)
     return cookies
 
@@ -191,12 +209,24 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             # METHODE 1: Cookie-sessie (aanbevolen, omzeilt de login)
             # ════════════════════════════════════════════════════════
             cookies_raw = os.environ.get('WERKSPOT_COOKIES', '').strip()
+            print(f"🍪 WERKSPOT_COOKIES secret: "
+                  f"{'GEVONDEN (' + str(len(cookies_raw)) + ' tekens)' if cookies_raw else '❌ LEEG / NIET INGESTELD'}")
+
             if cookies_raw:
                 try:
-                    print("🍪 Cookie-sessie laden...")
                     cookies = _parse_cookies(cookies_raw)
-                    await context.add_cookies(cookies)
-                    print(f"   {len(cookies)} cookies geladen")
+                    print(f"   {len(cookies)} cookies geparseerd")
+
+                    # Voeg cookies één voor één toe; sla slechte over zodat
+                    # één foute cookie niet de hele batch laat falen.
+                    ok, fail = 0, 0
+                    for c in cookies:
+                        try:
+                            await context.add_cookies([c])
+                            ok += 1
+                        except Exception:
+                            fail += 1
+                    print(f"   ✅ {ok} cookies toegevoegd, {fail} overgeslagen")
 
                     # Ga naar de leads-pagina (desktop URL)
                     await page.goto(
@@ -207,31 +237,22 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                     await page.wait_for_load_state('networkidle', timeout=10_000)
                     await asyncio.sleep(2)
 
-                    # Debug: bewaar wat we zien op de cookie-pagina
+                    # Debug: bewaar altijd wat we zien
                     await page.screenshot(path='debug_cookie.png', full_page=True)
                     body = await page.evaluate('() => document.body.innerText')
                     with open('debug_cookie_text.txt', 'w') as f:
                         f.write(body[:4000])
                     print(f"📍 Cookie-pagina URL: {page.url}")
 
-                    # Succescheck: niet op inlogpagina én geen 404
-                    on_login   = 'inloggen' in page.url.lower()
-                    is_404     = 'kunnen deze pagina niet vinden' in body
-                    if not on_login and not is_404:
-                        print(f"✅ Ingelogd via cookies: {page.url}")
+                    # Positieve inlog-signalen: dit menu zie je alleen ingelogd
+                    signals = ['Mijn account', 'Uitloggen', 'aangemeld als',
+                               'Nieuwe opdrachten', 'Activiteit', 'Contacten']
+                    matched = [s for s in signals if s in body]
+                    if matched:
+                        print(f"✅ Ingelogd via cookies (herkend: {matched})")
                         logged_in = True
                     else:
-                        print(f"⚠️  Cookie-check faalde (login={on_login}, 404={is_404})")
-                        print("   Toch even controleren of we eigenlijk wel ingelogd zijn...")
-                        # Soms is de sessie geldig maar de URL anders.
-                        # Check op homepage of we als gebruiker herkend worden.
-                        await page.goto('https://www.werkspot.nl/', wait_until='domcontentloaded', timeout=15_000)
-                        home_body = await page.evaluate('() => document.body.innerText')
-                        if 'Uitloggen' in home_body or 'Mijn Werkspot' in home_body or 'aangemeld als' in home_body:
-                            print("✅ Sessie is geldig (herkend op homepage) — toch ingelogd")
-                            logged_in = True
-                        else:
-                            print("❌ Cookies lijken echt verlopen")
+                        print("⚠️  Geen inlog-signaal gevonden op pagina")
                 except Exception as e:
                     print(f"⚠️  Cookie-login mislukt: {e}")
 
