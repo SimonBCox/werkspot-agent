@@ -125,6 +125,35 @@ def send_notification(topic: str, job: dict):
     except Exception as e:
         print(f"❌ Notificatie mislukt: {e}")
 
+# ─── Cookie parser ───────────────────────────────────────────────────
+def _parse_cookies(raw: str) -> list[dict]:
+    """
+    Zet een geëxporteerde cookie-JSON (van de 'Cookie-Editor' extensie)
+    om naar het formaat dat Playwright verwacht.
+    """
+    data = json.loads(raw)
+    cookies = []
+    for c in data:
+        cookie = {
+            'name':   c['name'],
+            'value':  c['value'],
+            'domain': c.get('domain', '.werkspot.nl'),
+            'path':   c.get('path', '/'),
+        }
+        # expirationDate (Cookie-Editor) → expires (Playwright)
+        if 'expirationDate' in c and c['expirationDate']:
+            cookie['expires'] = int(c['expirationDate'])
+        cookie['secure']   = bool(c.get('secure', True))
+        cookie['httpOnly'] = bool(c.get('httpOnly', False))
+        # sameSite normaliseren
+        ss = str(c.get('sameSite', 'Lax')).lower()
+        cookie['sameSite'] = {
+            'lax': 'Lax', 'strict': 'Strict', 'none': 'None',
+            'no_restriction': 'None', 'unspecified': 'Lax',
+        }.get(ss, 'Lax')
+        cookies.append(cookie)
+    return cookies
+
 # ─── Werkspot scraper ────────────────────────────────────────────────
 async def scrape_werkspot(email: str, password: str) -> list[dict]:
     jobs = []
@@ -156,118 +185,150 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
         page = await context.new_page()
 
         try:
-            print("🔐 Inloggen bij Werkspot...")
-            await page.goto('https://www.werkspot.nl/inloggen', wait_until='domcontentloaded', timeout=30_000)
+            logged_in = False
 
-            # Cookiebanner wegklikken
-            try:
-                await page.wait_for_selector(
-                    'button:has-text("Weiger alles"), button:has-text("Accepteer alles")',
-                    timeout=5_000
-                )
-                await page.click('button:has-text("Weiger alles")')
-                print("🍪 Cookiebanner gesloten")
-                await page.wait_for_load_state('networkidle', timeout=5_000)
-            except Exception:
-                print("ℹ️  Geen cookiebanner gevonden, doorgaan...")
+            # ════════════════════════════════════════════════════════
+            # METHODE 1: Cookie-sessie (aanbevolen, omzeilt de login)
+            # ════════════════════════════════════════════════════════
+            cookies_raw = os.environ.get('WERKSPOT_COOKIES', '').strip()
+            if cookies_raw:
+                try:
+                    print("🍪 Cookie-sessie laden...")
+                    cookies = _parse_cookies(cookies_raw)
+                    await context.add_cookies(cookies)
+                    print(f"   {len(cookies)} cookies geladen")
 
-            # ── Stap 1: e-mail invullen en versturen ──────────────
-            # Angular-formulieren reageren alleen op echte toetsaanslagen,
-            # niet op fill(). Daarom typen we karakter voor karakter.
-            # We gebruiken Locators (niet wait_for_selector) want alleen
-            # Locators ondersteunen press_sequentially.
-            email_loc = page.locator('input[type="email"], input[name="email"]').first
-            await email_loc.wait_for(state="visible", timeout=10_000)
-            await email_loc.click()
-            await email_loc.press_sequentially(email, delay=60)
-            await email_loc.press('Tab')   # blur → triggert Angular validatie
-            await asyncio.sleep(1.0)
-            print(f"✏️  E-mail getypt: {email}")
+                    # Direct naar leads — al ingelogd?
+                    await page.goto(
+                        'https://www.werkspot.nl/pro/leads',
+                        wait_until='domcontentloaded',
+                        timeout=20_000,
+                    )
+                    await page.wait_for_load_state('networkidle', timeout=10_000)
 
-            # Wacht tot de Inloggen-knop actief is, klik dan
-            try:
-                login_btn = page.get_by_role("button", name="Inloggen")
-                await login_btn.wait_for(state="visible", timeout=5_000)
-                await login_btn.click(timeout=5_000)
-                print("🖱️  Op 'Inloggen' geklikt")
-            except Exception as e:
-                print(f"⚠️  Knop klik mislukt ({e}), probeer Enter")
-                await email_loc.press('Enter')
+                    if 'inloggen' not in page.url:
+                        print(f"✅ Ingelogd via cookies: {page.url}")
+                        logged_in = True
+                    else:
+                        print("⚠️  Cookies verlopen of ongeldig — terug naar wachtwoordlogin")
+                except Exception as e:
+                    print(f"⚠️  Cookie-login mislukt: {e}")
 
-            # Wacht tot het volgende scherm verschijnt (keuze of wachtwoord)
-            try:
-                await page.wait_for_selector(
-                    'input[type="password"], '
-                    'text="Voer je wachtwoord in", '
-                    'text="Ontvang een code"',
-                    timeout=12_000,
-                )
-                print("✅ Volgend scherm geladen")
-            except Exception:
-                print("⏳ Volgend scherm niet gedetecteerd, screenshot maken")
+            # ════════════════════════════════════════════════════════
+            # METHODE 2: Wachtwoordlogin (fallback)
+            # ════════════════════════════════════════════════════════
+            if not logged_in:
+                print("🔐 Inloggen met e-mail + wachtwoord...")
+                await page.goto('https://www.werkspot.nl/inloggen', wait_until='domcontentloaded', timeout=30_000)
 
-            await page.screenshot(path='debug_step2.png')
-            txt = await page.evaluate('() => document.body.innerText')
-            with open('debug_step2_text.txt', 'w') as f:
-                f.write(txt[:3000])
-            print(f"📍 Na stap 1 (e-mail): {page.url}")
+                # Cookiebanner wegklikken
+                try:
+                    await page.wait_for_selector(
+                        'button:has-text("Weiger alles"), button:has-text("Accepteer alles")',
+                        timeout=5_000
+                    )
+                    await page.click('button:has-text("Weiger alles")')
+                    print("🍪 Cookiebanner gesloten")
+                    await page.wait_for_load_state('networkidle', timeout=5_000)
+                except Exception:
+                    print("ℹ️  Geen cookiebanner gevonden, doorgaan...")
 
-            # ── Stap 2: kies wachtwoord-login indien keuzescherm ──
-            try:
-                wachtwoord_optie = page.get_by_text("Voer je wachtwoord in", exact=False)
-                await wachtwoord_optie.wait_for(state="visible", timeout=4_000)
-                await wachtwoord_optie.click()
-                print("🔑 Gekozen voor wachtwoord-login")
-                await page.wait_for_selector('input[type="password"]', timeout=8_000)
-            except Exception:
-                print("ℹ️  Geen keuzescherm — direct naar wachtwoord")
+                # Stap 1: e-mail (karakter voor karakter ivm Angular)
+                email_loc = page.locator('input[type="email"], input[name="email"]').first
+                await email_loc.wait_for(state="visible", timeout=10_000)
+                await email_loc.click()
+                await email_loc.press_sequentially(email, delay=60)
+                await email_loc.press('Tab')
+                await asyncio.sleep(1.0)
+                print(f"✏️  E-mail getypt: {email}")
 
-            # ── Stap 3: wachtwoord invullen ────────────────────────
-            pwd_loc = page.locator('input[type="password"], input[name="password"]').first
-            await pwd_loc.wait_for(state="visible", timeout=10_000)
-            await pwd_loc.click()
-            await pwd_loc.press_sequentially(password, delay=60)
-            await pwd_loc.press('Tab')
-            await asyncio.sleep(1.0)
-            print("✏️  Wachtwoord getypt")
+                # Diagnostiek: is de bot-vlag verborgen?
+                wd = await page.evaluate('() => navigator.webdriver')
+                print(f"🤖 navigator.webdriver = {wd} (moet None/False zijn)")
 
-            try:
-                submit_btn = page.get_by_role("button", name="Inloggen")
-                await submit_btn.wait_for(state="visible", timeout=5_000)
-                await submit_btn.click(timeout=5_000)
-                print("🖱️  Op 'Inloggen' geklikt (wachtwoord)")
-            except Exception as e:
-                print(f"⚠️  Knop klik mislukt ({e}), probeer Enter")
-                await pwd_loc.press('Enter')
+                try:
+                    login_btn = page.get_by_role("button", name="Inloggen")
+                    await login_btn.wait_for(state="visible", timeout=5_000)
+                    disabled = await login_btn.is_disabled()
+                    print(f"🔘 Knop disabled? {disabled}")
+                    await login_btn.click(timeout=5_000)
+                    print("🖱️  Op 'Inloggen' geklikt")
+                except Exception as e:
+                    print(f"⚠️  Knop klik mislukt ({e}), probeer Enter")
+                    await email_loc.press('Enter')
 
-            # Wacht tot we van de loginpagina af zijn
-            try:
-                await page.wait_for_function(
-                    '() => !window.location.pathname.includes("inloggen")',
-                    timeout=15_000,
-                )
-            except Exception:
-                pass
-            await page.wait_for_load_state('networkidle', timeout=10_000)
-            print(f"📍 Na stap 3 (wachtwoord): {page.url}")
+                try:
+                    await page.wait_for_selector(
+                        'input[type="password"], text="Voer je wachtwoord in", text="Ontvang een code"',
+                        timeout=12_000,
+                    )
+                    print("✅ Volgend scherm geladen")
+                except Exception:
+                    print("⏳ Volgend scherm niet gedetecteerd")
 
-            if 'inloggen' in page.url:
-                print("❌ Inloggen mislukt")
-                await page.screenshot(path='debug_login_failed.png')
-                return jobs
+                await page.screenshot(path='debug_step2.png')
+                txt = await page.evaluate('() => document.body.innerText')
+                with open('debug_step2_text.txt', 'w') as f:
+                    f.write(txt[:3000])
+                print(f"📍 Na stap 1: {page.url}")
 
-            print(f"✅ Ingelogd. URL: {page.url}")
+                # Stap 2: kies wachtwoord-login indien keuzescherm
+                try:
+                    wachtwoord_optie = page.get_by_text("Voer je wachtwoord in", exact=False)
+                    await wachtwoord_optie.wait_for(state="visible", timeout=4_000)
+                    await wachtwoord_optie.click()
+                    print("🔑 Gekozen voor wachtwoord-login")
+                    await page.wait_for_selector('input[type="password"]', timeout=8_000)
+                except Exception:
+                    print("ℹ️  Geen keuzescherm — direct naar wachtwoord")
 
-            for url_candidate in [
-                'https://www.werkspot.nl/pro/leads',
-                'https://www.werkspot.nl/pro/opdrachten',
-                'https://www.werkspot.nl/vakman/leads',
-                'https://www.werkspot.nl/vakman/opdrachten',
-            ]:
-                await page.goto(url_candidate, wait_until='domcontentloaded', timeout=15_000)
-                if 'inloggen' not in page.url and page.url != 'https://www.werkspot.nl/':
-                    print(f"✅ Leads-pagina gevonden: {page.url}")
-                    break
+                # Stap 3: wachtwoord
+                pwd_loc = page.locator('input[type="password"], input[name="password"]').first
+                await pwd_loc.wait_for(state="visible", timeout=10_000)
+                await pwd_loc.click()
+                await pwd_loc.press_sequentially(password, delay=60)
+                await pwd_loc.press('Tab')
+                await asyncio.sleep(1.0)
+                print("✏️  Wachtwoord getypt")
+
+                try:
+                    submit_btn = page.get_by_role("button", name="Inloggen")
+                    await submit_btn.wait_for(state="visible", timeout=5_000)
+                    await submit_btn.click(timeout=5_000)
+                    print("🖱️  Op 'Inloggen' geklikt (wachtwoord)")
+                except Exception as e:
+                    print(f"⚠️  Knop klik mislukt ({e}), probeer Enter")
+                    await pwd_loc.press('Enter')
+
+                try:
+                    await page.wait_for_function(
+                        '() => !window.location.pathname.includes("inloggen")',
+                        timeout=15_000,
+                    )
+                except Exception:
+                    pass
+                await page.wait_for_load_state('networkidle', timeout=10_000)
+                print(f"📍 Na wachtwoord: {page.url}")
+
+                if 'inloggen' in page.url:
+                    print("❌ Inloggen mislukt")
+                    await page.screenshot(path='debug_login_failed.png')
+                    return jobs
+                logged_in = True
+                print(f"✅ Ingelogd: {page.url}")
+
+            # ── Naar leads (indien nog niet daar) ─────────────────
+            if '/leads' not in page.url and '/opdracht' not in page.url:
+                for url_candidate in [
+                    'https://www.werkspot.nl/pro/leads',
+                    'https://www.werkspot.nl/pro/opdrachten',
+                    'https://www.werkspot.nl/vakman/leads',
+                    'https://www.werkspot.nl/vakman/opdrachten',
+                ]:
+                    await page.goto(url_candidate, wait_until='domcontentloaded', timeout=15_000)
+                    if 'inloggen' not in page.url and page.url != 'https://www.werkspot.nl/':
+                        print(f"✅ Leads-pagina gevonden: {page.url}")
+                        break
 
             await page.wait_for_load_state('networkidle', timeout=10_000)
             await asyncio.sleep(2)
