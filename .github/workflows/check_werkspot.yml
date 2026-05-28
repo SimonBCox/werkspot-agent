@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write              # Nodig om seen_jobs.json terug te committen
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
