@@ -171,17 +171,40 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             await page.wait_for_load_state('networkidle', timeout=10_000)
             print(f"📍 Na stap 1 (e-mail): {page.url}")
 
-            # Stap 2: klik op "Voer je wachtwoord in" als dat scherm verschijnt
-            try:
-                await page.wait_for_selector(
-                    'text=Voer je wachtwoord in, a:has-text("wachtwoord"), button:has-text("wachtwoord")',
-                    timeout=5_000
-                )
-                await page.click('text=Voer je wachtwoord in')
-                print("🔑 Gekozen voor wachtwoord-login")
-                await page.wait_for_load_state('networkidle', timeout=8_000)
-            except Exception:
-                print("ℹ️  Geen keuzescherm gevonden, doorgaan...")
+            # Stap 2: dump HTML van keuzescherm voor debug
+            await page.screenshot(path='debug_step2.png')
+            html_snippet = await page.evaluate('() => document.body.innerHTML')
+            with open('debug_step2_html.txt', 'w') as f:
+                f.write(html_snippet[:8000])
+            print("📄 HTML keuzescherm opgeslagen")
+
+            # Probeer op "Voer je wachtwoord in" te klikken via meerdere strategieën
+            clicked = False
+            strategies = [
+                lambda: page.get_by_text("Voer je wachtwoord in", exact=False).click(),
+                lambda: page.locator("text=wachtwoord").last.click(),
+                lambda: page.locator("a, button, div, li").filter(has_text="wachtwoord").last.click(),
+                lambda: page.evaluate('''
+                    () => {
+                        const els = [...document.querySelectorAll("a, button, div, li, span")];
+                        const el = els.find(e => e.innerText && e.innerText.toLowerCase().includes("wachtwoord"));
+                        if (el) { el.click(); return true; }
+                        return false;
+                    }
+                '''),
+            ]
+            for i, strategy in enumerate(strategies):
+                try:
+                    result = await strategy()
+                    print(f"🔑 Klik strategie {i+1} gelukt")
+                    clicked = True
+                    await page.wait_for_load_state('networkidle', timeout=8_000)
+                    break
+                except Exception as e:
+                    print(f"⚠️  Strategie {i+1} mislukt: {e}")
+
+            if not clicked:
+                print("❌ Kon niet op wachtwoord-optie klikken")
 
             # Stap 3: wachtwoord invullen
             try:
