@@ -160,14 +160,29 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             except Exception:
                 print("ℹ️  Geen cookiebanner gevonden, doorgaan...")
 
+            # Stap 1: e-mailadres invullen
             await page.wait_for_selector('input[type="email"], input[name="email"]', timeout=10_000)
             await page.fill('input[type="email"], input[name="email"]', email)
-            await page.fill('input[type="password"], input[name="password"]', password)
             await page.click(
                 'button[type="submit"], input[type="submit"], '
-                'button:has-text("Inloggen"), button:has-text("Log in")'
+                'button:has-text("Inloggen"), button:has-text("Log in"), '
+                'button:has-text("Volgende"), button:has-text("Doorgaan")'
             )
-            await page.wait_for_load_state('networkidle', timeout=15_000)
+            await page.wait_for_load_state('networkidle', timeout=10_000)
+            print(f"📍 Na stap 1 (e-mail): {page.url}")
+
+            # Stap 2: wachtwoord invullen (twee-staps login)
+            try:
+                await page.wait_for_selector('input[type="password"], input[name="password"]', timeout=8_000)
+                await page.fill('input[type="password"], input[name="password"]', password)
+                await page.click(
+                    'button[type="submit"], input[type="submit"], '
+                    'button:has-text("Inloggen"), button:has-text("Log in")'
+                )
+                await page.wait_for_load_state('networkidle', timeout=15_000)
+                print(f"📍 Na stap 2 (wachtwoord): {page.url}")
+            except Exception:
+                print("ℹ️  Geen tweede stap gevonden, mogelijk al ingelogd")
 
             if 'inloggen' in page.url:
                 print("❌ Inloggen mislukt")
