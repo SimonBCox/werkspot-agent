@@ -5,7 +5,6 @@ import requests
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 # ─── Laag 1: snelle trefwoordfilter ─────────────────────────────────
-# Vangt duidelijke gevallen op zonder Groq aan te roepen
 RELEVANT_KEYWORDS = [
     'constructieberekening', 'constructie berekening',
     'draagmuur', 'dragende muur', 'dragend',
@@ -26,31 +25,22 @@ EXCLUDE_KEYWORDS = [
 ]
 
 def keyword_filter(title: str, description: str) -> bool:
-    """Snelle pre-filter. Puur tekenwerk eruit, relevante trefwoorden erin."""
     text = (title + ' ' + description).lower()
-
     has_tekening   = 'tekening' in text or 'tekenwerk' in text
     has_berekening = any(k in text for k in ['berekening', 'constructeur', 'constructief', 'constructie'])
-
     if has_tekening and not has_berekening:
         return False
     for ex in EXCLUDE_KEYWORDS:
         if ex in text:
             return False
-
     return any(k in text for k in RELEVANT_KEYWORDS)
 
 # ─── Laag 2: Groq AI analyse ─────────────────────────────────────────
 def groq_is_relevant(title: str, description: str) -> bool:
-    """
-    Vraagt Groq (Llama 3) of de opdracht relevant is voor een constructeur
-    die zich specialiseert in draagmuurberekeningen en uitbouwberekeningen.
-    Wordt alleen aangeroepen voor nieuwe, nog niet geziene opdrachten.
-    """
     api_key = os.environ.get('GROQ_API_KEY', '')
     if not api_key:
         print("⚠️  Geen GROQ_API_KEY — alleen trefwoordfilter gebruikt")
-        return True  # doorsturen als Groq niet beschikbaar is
+        return True
 
     prompt = f"""Je bent een assistent die opdrachten beoordeelt voor een zelfstandig constructeur.
 Deze constructeur doet uitsluitend:
@@ -91,7 +81,25 @@ Is dit relevant voor deze constructeur?"""
         return answer.startswith('JA')
     except Exception as e:
         print(f"⚠️  Groq fout: {e} — doorsturen op basis van trefwoorden")
-        return True  # bij fout: liever false positive dan gemiste opdracht
+        return True
+
+# ─── Heartbeat: stille statusmelding elke run ────────────────────────
+def send_heartbeat(topic: str, total: int, new: int, notifications: int):
+    """Stille melding zodat je weet dat de agent actief is en wat hij ziet."""
+    try:
+        requests.post(
+            f'https://ntfy.sh/{topic}',
+            data=f"Gevonden op pagina: {total} | Nieuw: {new} | Notificaties: {notifications}".encode('utf-8'),
+            headers={
+                'Title':    '🔍 Werkspot scan voltooid',
+                'Priority': 'min',    # geen geluid, alleen zichtbaar in notificatiebalk
+                'Tags':     'white_check_mark',
+            },
+            timeout=10,
+        )
+        print("📡 Heartbeat verstuurd")
+    except Exception as e:
+        print(f"⚠️  Heartbeat mislukt: {e}")
 
 # ─── Notificatie via ntfy ────────────────────────────────────────────
 def send_notification(topic: str, job: dict):
@@ -155,7 +163,6 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
 
             print(f"✅ Ingelogd. URL: {page.url}")
 
-            # Naar leads/opdrachten
             for url_candidate in [
                 'https://www.werkspot.nl/pro/leads',
                 'https://www.werkspot.nl/pro/opdrachten',
@@ -164,12 +171,24 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             ]:
                 await page.goto(url_candidate, wait_until='domcontentloaded', timeout=15_000)
                 if 'inloggen' not in page.url and page.url != 'https://www.werkspot.nl/':
-                    print(f"✅ Leads-pagina: {page.url}")
+                    print(f"✅ Leads-pagina gevonden: {page.url}")
                     break
 
             await page.wait_for_load_state('networkidle', timeout=10_000)
             await asyncio.sleep(2)
+
+            # Sla altijd een screenshot op zodat je kunt zien wat de scraper ziet
             await page.screenshot(path='debug_leads.png', full_page=True)
+            print("📸 Screenshot opgeslagen als debug_leads.png")
+
+            # Dump volledige paginatekst voor debug
+            page_text = await page.evaluate('() => document.body.innerText')
+            with open('debug_page_text.txt', 'w') as f:
+                f.write(page_text[:5000])  # eerste 5000 tekens
+            print("📄 Paginatekst opgeslagen als debug_page_text.txt (eerste 5000 tekens):")
+            print("─" * 60)
+            print(page_text[:1000])
+            print("─" * 60)
 
             print("🔍 Opdrachten ophalen...")
             page_jobs = await page.evaluate('''
@@ -209,6 +228,12 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             ''')
 
             print(f"📊 {len(page_jobs)} opdrachten gevonden op de pagina")
+
+            # Print alle gevonden opdrachten zodat je kunt controleren wat er gevonden wordt
+            for i, job in enumerate(page_jobs):
+                print(f"  [{i+1}] {job.get('title','?')[:70]}")
+                print(f"       {job.get('url','')[:80]}")
+
             jobs = page_jobs
 
         except PlaywrightTimeout as e:
@@ -239,6 +264,7 @@ async def main():
 
     new_ids       = set()
     notifications = 0
+    new_count     = 0
 
     for job in jobs:
         job_id = job.get('id', '').strip()
@@ -248,28 +274,33 @@ async def main():
         new_ids.add(job_id)
 
         if job_id in seen_ids:
-            continue  # al eerder gezien, overslaan
+            continue
 
+        new_count += 1
         title = job.get('title', '')
         desc  = job.get('description', '')
 
         print(f"\n🆕 Nieuwe opdracht: {title[:60]}")
 
-        # Laag 1: trefwoorden
         if not keyword_filter(title, desc):
-            print(f"⏭️  Laag 1 filter: niet relevant")
+            print(f"   ⏭️  Laag 1 filter: niet relevant")
             continue
 
-        # Laag 2: Groq AI
         if not groq_is_relevant(title, desc):
-            print(f"⏭️  Groq: niet relevant")
+            print(f"   ⏭️  Groq: niet relevant")
             continue
 
-        # Beide lagen groen → notificatie
         send_notification(ntfy_topic, job)
         notifications += 1
 
-    print(f"\n📬 {notifications} notificatie(s) verstuurd")
+    print(f"\n{'='*50}")
+    print(f"📊 Totaal op pagina : {len(jobs)}")
+    print(f"🆕 Nieuw deze run   : {new_count}")
+    print(f"📬 Notificaties     : {notifications}")
+    print(f"{'='*50}")
+
+    # Stille heartbeat zodat je in ntfy kunt zien dat de agent actief is
+    send_heartbeat(ntfy_topic, total=len(jobs), new=new_count, notifications=notifications)
 
     all_ids = list((seen_ids | new_ids))[-1000:]
     with open(seen_file, 'w') as f:
