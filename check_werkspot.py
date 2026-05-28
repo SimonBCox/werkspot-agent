@@ -160,64 +160,62 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             except Exception:
                 print("ℹ️  Geen cookiebanner gevonden, doorgaan...")
 
-            # Stap 1: e-mailadres invullen
-            await page.wait_for_selector('input[type="email"], input[name="email"]', timeout=10_000)
-            await page.fill('input[type="email"], input[name="email"]', email)
-            await page.click(
-                'button[type="submit"], input[type="submit"], '
-                'button:has-text("Inloggen"), button:has-text("Log in"), '
-                'button:has-text("Volgende"), button:has-text("Doorgaan")'
+            # ── Stap 1: e-mail invullen en versturen ──────────────
+            email_input = await page.wait_for_selector(
+                'input[type="email"], input[name="email"]', timeout=10_000
             )
-            await page.wait_for_load_state('networkidle', timeout=10_000)
+            await email_input.click()
+            await email_input.fill(email)
+            await asyncio.sleep(0.5)
+
+            # Probeer de knop te klikken via JS als normale klik niet werkt
+            clicked_step1 = False
+            try:
+                await page.click('button:has-text("Inloggen")', timeout=3_000)
+                clicked_step1 = True
+            except Exception:
+                pass
+
+            if not clicked_step1:
+                # Fallback: Enter indrukken
+                await email_input.press('Enter')
+                print("⌨️  Enter gebruikt voor stap 1")
+
+            # Wacht tot keuzescherm OF wachtwoordveld verschijnt
+            await page.wait_for_selector(
+                'input[type="password"], text=Voer je wachtwoord in, text=wachtwoord',
+                timeout=10_000
+            )
+            await page.screenshot(path='debug_step2.png')
             print(f"📍 Na stap 1 (e-mail): {page.url}")
 
-            # Stap 2: dump HTML van keuzescherm voor debug
-            await page.screenshot(path='debug_step2.png')
-            html_snippet = await page.evaluate('() => document.body.innerHTML')
-            with open('debug_step2_html.txt', 'w') as f:
-                f.write(html_snippet[:8000])
-            print("📄 HTML keuzescherm opgeslagen")
-
-            # Probeer op "Voer je wachtwoord in" te klikken via meerdere strategieën
-            clicked = False
-            strategies = [
-                lambda: page.get_by_text("Voer je wachtwoord in", exact=False).click(),
-                lambda: page.locator("text=wachtwoord").last.click(),
-                lambda: page.locator("a, button, div, li").filter(has_text="wachtwoord").last.click(),
-                lambda: page.evaluate('''
-                    () => {
-                        const els = [...document.querySelectorAll("a, button, div, li, span")];
-                        const el = els.find(e => e.innerText && e.innerText.toLowerCase().includes("wachtwoord"));
-                        if (el) { el.click(); return true; }
-                        return false;
-                    }
-                '''),
-            ]
-            for i, strategy in enumerate(strategies):
-                try:
-                    result = await strategy()
-                    print(f"🔑 Klik strategie {i+1} gelukt")
-                    clicked = True
-                    await page.wait_for_load_state('networkidle', timeout=8_000)
-                    break
-                except Exception as e:
-                    print(f"⚠️  Strategie {i+1} mislukt: {e}")
-
-            if not clicked:
-                print("❌ Kon niet op wachtwoord-optie klikken")
-
-            # Stap 3: wachtwoord invullen
+            # ── Stap 2: klik op "Voer je wachtwoord in" ───────────
+            # Alleen nodig als keuzescherm zichtbaar is
             try:
-                await page.wait_for_selector('input[type="password"], input[name="password"]', timeout=8_000)
-                await page.fill('input[type="password"], input[name="password"]', password)
-                await page.click(
-                    'button[type="submit"], input[type="submit"], '
-                    'button:has-text("Inloggen"), button:has-text("Log in")'
-                )
-                await page.wait_for_load_state('networkidle', timeout=15_000)
-                print(f"📍 Na stap 3 (wachtwoord): {page.url}")
-            except Exception as e:
-                print(f"❌ Wachtwoord stap mislukt: {e}")
+                wachtwoord_knop = page.get_by_text("Voer je wachtwoord in")
+                await wachtwoord_knop.wait_for(timeout=3_000)
+                await wachtwoord_knop.click()
+                print("🔑 Geklikt op 'Voer je wachtwoord in'")
+                await page.wait_for_selector('input[type="password"]', timeout=8_000)
+            except Exception:
+                print("ℹ️  Geen keuzescherm, direct wachtwoordveld")
+
+            # ── Stap 3: wachtwoord invullen ────────────────────────
+            pwd_input = await page.wait_for_selector(
+                'input[type="password"], input[name="password"]', timeout=8_000
+            )
+            await pwd_input.click()
+            await pwd_input.fill(password)
+            await asyncio.sleep(0.5)
+
+            try:
+                await page.click('button:has-text("Inloggen")', timeout=3_000)
+            except Exception:
+                await pwd_input.press('Enter')
+                print("⌨️  Enter gebruikt voor stap 3")
+
+            await page.wait_for_load_state('networkidle', timeout=15_000)
+            print(f"📍 Na stap 3 (wachtwoord): {page.url}")
 
             if 'inloggen' in page.url:
                 print("❌ Inloggen mislukt")
