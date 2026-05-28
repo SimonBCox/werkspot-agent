@@ -147,6 +147,19 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
         try:
             print("🔐 Inloggen bij Werkspot...")
             await page.goto('https://www.werkspot.nl/inloggen', wait_until='domcontentloaded', timeout=30_000)
+
+            # Cookiebanner wegklikken
+            try:
+                await page.wait_for_selector(
+                    'button:has-text("Weiger alles"), button:has-text("Accepteer alles")',
+                    timeout=5_000
+                )
+                await page.click('button:has-text("Weiger alles")')
+                print("🍪 Cookiebanner gesloten")
+                await page.wait_for_load_state('networkidle', timeout=5_000)
+            except Exception:
+                print("ℹ️  Geen cookiebanner gevonden, doorgaan...")
+
             await page.wait_for_selector('input[type="email"], input[name="email"]', timeout=10_000)
             await page.fill('input[type="email"], input[name="email"]', email)
             await page.fill('input[type="password"], input[name="password"]', password)
