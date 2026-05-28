@@ -59,12 +59,15 @@ jobs:
           GROQ_API_KEY:      ${{ secrets.GROQ_API_KEY }}
         run: python check_werkspot.py
 
-      - name: Upload debug screenshots (bij fout)
-        if: failure()
+      - name: Upload debug bestanden (altijd)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-screenshots
-          path: debug_*.png
+          name: debug-${{ github.run_number }}
+          path: |
+            debug_leads.png
+            debug_page_text.txt
+            debug_*.png
           retention-days: 3
 
       - name: Commit bijgewerkte seen_jobs.json
