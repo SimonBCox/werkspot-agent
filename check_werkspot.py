@@ -200,13 +200,14 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
 
                     # Direct naar leads — al ingelogd?
                     await page.goto(
-                        'https://www.werkspot.nl/pro/leads',
+                        'https://www.werkspot.nl/service-pro/new-service-requests',
                         wait_until='domcontentloaded',
                         timeout=20_000,
                     )
                     await page.wait_for_load_state('networkidle', timeout=10_000)
 
-                    if 'inloggen' not in page.url:
+                    body = await page.evaluate('() => document.body.innerText')
+                    if 'inloggen' not in page.url and 'kunnen deze pagina niet vinden' not in body:
                         print(f"✅ Ingelogd via cookies: {page.url}")
                         logged_in = True
                     else:
@@ -318,15 +319,14 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                 print(f"✅ Ingelogd: {page.url}")
 
             # ── Naar leads (indien nog niet daar) ─────────────────
-            if '/leads' not in page.url and '/opdracht' not in page.url:
+            if 'new-service-requests' not in page.url:
                 for url_candidate in [
-                    'https://www.werkspot.nl/pro/leads',
-                    'https://www.werkspot.nl/pro/opdrachten',
-                    'https://www.werkspot.nl/vakman/leads',
-                    'https://www.werkspot.nl/vakman/opdrachten',
+                    'https://www.werkspot.nl/service-pro/new-service-requests',
+                    'https://www.werkspot.nl/service-pro/service-requests',
                 ]:
                     await page.goto(url_candidate, wait_until='domcontentloaded', timeout=15_000)
-                    if 'inloggen' not in page.url and page.url != 'https://www.werkspot.nl/':
+                    body = await page.evaluate('() => document.body.innerText')
+                    if 'inloggen' not in page.url and 'kunnen deze pagina niet vinden' not in body:
                         print(f"✅ Leads-pagina gevonden: {page.url}")
                         break
 
@@ -351,7 +351,7 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                 () => {
                     const jobs = [];
                     const seen = new Set();
-                    const linkSels = ['a[href*="/lead"]','a[href*="/opdracht"]','a[href*="/klus"]'];
+                    const linkSels = ['a[href*="/service-request"]','a[href*="/lead"]','a[href*="/opdracht"]','a[href*="/klus"]'];
                     for (const sel of linkSels) {
                         document.querySelectorAll(sel).forEach(el => {
                             if (seen.has(el.href)) return;
@@ -367,7 +367,7 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                             });
                         });
                     }
-                    const cardSels = ['[class*="lead"]','[class*="opdracht"]','[class*="job-card"]','[class*="request-card"]'];
+                    const cardSels = ['[class*="service-request"]','[class*="request"]','[class*="lead"]','[class*="opdracht"]','[class*="job-card"]','[class*="request-card"]'];
                     for (const sel of cardSels) {
                         document.querySelectorAll(sel).forEach(el => {
                             const link = el.querySelector('a');
