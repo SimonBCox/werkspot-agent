@@ -83,6 +83,36 @@ Is dit relevant voor deze constructeur?"""
         print(f"⚠️  Groq fout: {e} — doorsturen op basis van trefwoorden")
         return True
 
+# ─── Actieve uren (Nederlandse tijd, incl. zomer/wintertijd) ─────────
+def binnen_actieve_uren() -> bool:
+    """
+    Weekdagen (ma-vr): 08:00 - 21:30
+    Weekend (za-zo):   09:00 - 21:00
+    Gebruikt Europe/Amsterdam, dus zomer/wintertijd gaat automatisch goed.
+    """
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo('Europe/Amsterdam'))
+    except Exception:
+        # Fallback: UTC+2 (zomertijd) als zoneinfo niet beschikbaar is
+        from datetime import timedelta, timezone
+        now = datetime.now(timezone(timedelta(hours=2)))
+
+    weekday = now.weekday()  # 0=maandag ... 6=zondag
+    minuten = now.hour * 60 + now.minute
+
+    if weekday <= 4:  # ma t/m vr
+        start, eind = 8 * 60, 21 * 60 + 30      # 08:00 - 21:30
+    else:             # za, zo
+        start, eind = 9 * 60, 21 * 60           # 09:00 - 21:00
+
+    actief = start <= minuten <= eind
+    dag = ['ma','di','wo','do','vr','za','zo'][weekday]
+    print(f"🕐 Nu: {dag} {now.hour:02d}:{now.minute:02d} (NL) — "
+          f"{'binnen' if actief else 'buiten'} actieve uren")
+    return actief
+
 # ─── Heartbeat: stille statusmelding elke run ────────────────────────
 def send_heartbeat(topic: str, total: int, new: int, notifications: int):
     """Stille melding zodat je weet dat de agent actief is en wat hij ziet."""
@@ -121,8 +151,12 @@ def send_notification(topic: str, job: dict):
         body += '   '.join(extra) + '\n'
     body += '\n' + omschrijving + f"\n\n🔗 {url}"
 
-    # HTTP-headers accepteren geen emoji (latin-1). Maak de titel veilig.
-    safe_title = title.encode('latin-1', 'replace').decode('latin-1')
+    # HTTP-headers accepteren geen emoji (latin-1). Maak de titel veilig
+    # en vervang lastige tekens netjes (² → 2) i.p.v. door een vraagteken.
+    safe_title = (title
+                  .replace('²', '2').replace('³', '3')
+                  .replace('°', ' graden')
+                  .encode('latin-1', 'replace').decode('latin-1'))
 
     try:
         r = requests.post(
@@ -556,6 +590,11 @@ async def scrape_werkspot(email: str, password: str, known_ids: set) -> list[dic
 # ─── Hoofdprogramma ──────────────────────────────────────────────────
 async def main():
     from datetime import datetime
+
+    # Buiten actieve uren? Dan niets doen (geen meldingen 's nachts).
+    if not binnen_actieve_uren():
+        print("😴 Buiten actieve uren — run overgeslagen.")
+        return
 
     store_file = 'opdrachten.json'
     existing: list[dict] = []
