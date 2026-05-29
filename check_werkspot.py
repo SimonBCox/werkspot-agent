@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import requests
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
@@ -72,33 +73,42 @@ NEE|<korte reden van max 12 woorden>
 Titel: {title}
 Omschrijving / details: {description}"""
 
-    try:
-        response = requests.post(
-            'https://api.groq.com/openai/v1/chat/completions',
-            headers={
-                'Authorization': f'Bearer {api_key}',
-                'Content-Type': 'application/json',
-            },
-            json={
-                'model': 'llama-3.1-8b-instant',
-                'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 40,
-                'temperature': 0,
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        raw = response.json()['choices'][0]['message']['content'].strip()
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                'https://api.groq.com/openai/v1/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'model': 'llama-3.1-8b-instant',
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'max_tokens': 40,
+                    'temperature': 0,
+                },
+                timeout=15,
+            )
+            if response.status_code == 429:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                print(f"⏳ Groq rate limit — wacht {wait}s (poging {attempt + 1}/3)")
+                time.sleep(wait)
+                continue
+            response.raise_for_status()
+            raw = response.json()['choices'][0]['message']['content'].strip()
 
-        # Verwacht "JA|reden" of "NEE|reden"
-        besluit, _, reden = raw.partition('|')
-        relevant = besluit.strip().upper().startswith('JA')
-        reden = reden.strip() or '(geen reden gegeven)'
-        print(f"🤖 Groq: {'JA' if relevant else 'NEE'} — {reden} — {title[:45]}")
-        return relevant, reden
-    except Exception as e:
-        print(f"⚠️  Groq fout: {e} — doorgestuurd")
-        return True, f'Groq-fout, standaard doorgestuurd ({e})'
+            # Verwacht "JA|reden" of "NEE|reden"
+            besluit, _, reden = raw.partition('|')
+            relevant = besluit.strip().upper().startswith('JA')
+            reden = reden.strip() or '(geen reden gegeven)'
+            print(f"🤖 Groq: {'JA' if relevant else 'NEE'} — {reden} — {title[:45]}")
+            return relevant, reden
+        except Exception as e:
+            print(f"⚠️  Groq fout: {e} — doorgestuurd")
+            return True, f'Groq-fout, standaard doorgestuurd ({e})'
+
+    print("⚠️  Groq rate limit na 3 pogingen — doorgestuurd")
+    return True, 'Groq rate limit na 3 pogingen, standaard doorgestuurd'
 
 # ─── Actieve uren (Nederlandse tijd, incl. zomer/wintertijd) ─────────
 def binnen_actieve_uren() -> bool:

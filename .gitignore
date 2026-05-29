@@ -4,8 +4,12 @@ __pycache__/
 *.pyo
 .env
 
-# Debug screenshots (lokaal, niet in repo)
+# Debug bestanden (lokaal, niet in repo)
 debug_*.png
+debug_*.txt
+
+# Verouderd — vervangen door opdrachten.json
+seen_jobs.json
 
 # OS
 .DS_Store

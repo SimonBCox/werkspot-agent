@@ -10,7 +10,7 @@ on:
   workflow_dispatch:           # Handmatig starten (voor testen)
 
 permissions:
-  contents: write              # Nodig om seen_jobs.json terug te committen
+  contents: write              # Nodig om opdrachten.json terug te committen
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -39,7 +39,7 @@ jobs:
           key: pip-werkspot-v1
 
       - name: Install Python dependencies
-        run: pip install playwright requests
+        run: pip install -r requirements.txt
 
       - name: Cache Playwright browser
         uses: actions/cache@v4
@@ -74,10 +74,10 @@ jobs:
             debug_*.txt
           retention-days: 3
 
-      - name: Commit bijgewerkte seen_jobs.json
+      - name: Commit bijgewerkte opdrachten.json
         run: |
           git config user.name  "werkspot-bot"
           git config user.email "werkspot-bot@users.noreply.github.com"
-          git add opdrachten.json seen_jobs.json 2>/dev/null || git add opdrachten.json
+          git add opdrachten.json
           git diff --staged --quiet || git commit -m "chore: update opdrachten [skip ci]"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git

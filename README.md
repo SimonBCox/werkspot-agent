@@ -1,4 +1,4 @@
-# Werkspot Lead Checker 🔨
+# Werkspot Lead Checker 🔨 · v1.0.0
 
 Controleert elke 15 minuten Werkspot op nieuwe relevante opdrachten en stuurt een pushmelding naar je telefoon via **ntfy**.
 
@@ -15,9 +15,9 @@ Controleert elke 15 minuten Werkspot op nieuwe relevante opdrachten en stuurt ee
 
 ### Stap 2 – Upload de bestanden
 
-Upload deze 4 bestanden naar het root van je repo:
+Upload deze 3 bestanden naar het root van je repo:
 - `check_werkspot.py`
-- `seen_jobs.json`
+- `requirements.txt`
 - `.github/workflows/check_werkspot.yml`
 
 > Tip: je kunt bestanden direct uploaden via de GitHub website (Add file → Upload files).
@@ -33,15 +33,18 @@ Upload deze 4 bestanden naar het root van je repo:
 ### Stap 4 – Sla je gegevens veilig op in GitHub Secrets
 
 1. Ga in je repo naar **Settings → Secrets and variables → Actions**
-2. Voeg deze 3 secrets toe via **New repository secret**:
+2. Voeg de volgende secrets toe via **New repository secret**:
 
-| Naam | Waarde |
-|------|--------|
-| `WERKSPOT_EMAIL` | jouw Werkspot e-mailadres |
-| `WERKSPOT_PASSWORD` | jouw Werkspot wachtwoord |
-| `NTFY_TOPIC` | jouw gekozen kanaalnaam (bijv. `werkspot-simon-2024`) |
+| Naam | Verplicht | Waarde |
+|------|-----------|--------|
+| `WERKSPOT_EMAIL` | ✅ | jouw Werkspot e-mailadres |
+| `WERKSPOT_PASSWORD` | ✅ | jouw Werkspot wachtwoord |
+| `NTFY_TOPIC` | ✅ | jouw gekozen kanaalnaam (bijv. `werkspot-simon-2024`) |
+| `WERKSPOT_COOKIES` | Aanbevolen | zie [COOKIES_INSTELLEN.md](COOKIES_INSTELLEN.md) |
+| `GROQ_API_KEY` | Optioneel | Groq API-sleutel voor AI-relevantiecheck |
 
 > Je wachtwoord is versleuteld opgeslagen en nooit zichtbaar, ook niet in de logs.
+> De `WERKSPOT_COOKIES` secret zorgt voor een betrouwbaardere login — zie [COOKIES_INSTELLEN.md](COOKIES_INSTELLEN.md).
 
 ### Stap 5 – Test het handmatig
 
@@ -73,6 +76,8 @@ De agent stuurt alleen meldingen voor opdrachten met trefwoorden zoals:
 
 Puur tekenwerk (zonder berekening) wordt **automatisch gefilterd**.
 
+Als `GROQ_API_KEY` is ingesteld, gebruikt de agent ook een AI-check als tweede laag. Zonder sleutel werkt alleen het trefwoordfilter.
+
 Wil je trefwoorden aanpassen? Bewerk `RELEVANT_KEYWORDS` in `check_werkspot.py`.
 
 ---
@@ -80,7 +85,7 @@ Wil je trefwoorden aanpassen? Bewerk `RELEVANT_KEYWORDS` in `check_werkspot.py`.
 ## Problemen?
 
 - **Geen meldingen?** → Run handmatig en check de logs onder Actions
-- **Login mislukt?** → Download debug screenshot via Artifacts
+- **Login mislukt?** → Download debug screenshot via Artifacts; overweeg cookies in te stellen (zie [COOKIES_INSTELLEN.md](COOKIES_INSTELLEN.md))
 - **Verkeerde opdrachten?** → Pas `RELEVANT_KEYWORDS` aan in het script
 
 ---
