@@ -103,14 +103,21 @@ def send_heartbeat(topic: str, total: int, new: int, notifications: int):
 
 # ─── Notificatie via ntfy ────────────────────────────────────────────
 def send_notification(topic: str, job: dict):
-    title = job.get('title', 'Nieuwe opdracht')[:60]
-    desc  = job.get('description', '')[:350]
-    url   = job.get('url', 'https://www.werkspot.nl/pro/leads')
+    title = job.get('titel', 'Nieuwe opdracht')[:60]
+    locatie   = job.get('locatie', '')
+    geplaatst = job.get('geplaatst', '')
+    omschrijving = job.get('omschrijving', '')[:300]
+    url   = job.get('url', 'https://www.werkspot.nl/service-pro/new-service-requests')
+
+    body = ''
+    if locatie or geplaatst:
+        body += f"📍 {locatie}   🕐 {geplaatst}\n\n"
+    body += omschrijving + f"\n\n🔗 {url}"
 
     try:
         r = requests.post(
             f'https://ntfy.sh/{topic}',
-            data=f"{desc}\n\n🔗 {url}".encode('utf-8'),
+            data=body.encode('utf-8'),
             headers={
                 'Title':    f'🔨 {title}',
                 'Priority': 'urgent',
@@ -173,7 +180,24 @@ def _parse_cookies(raw: str) -> list[dict]:
     return cookies
 
 # ─── Werkspot scraper ────────────────────────────────────────────────
-async def scrape_werkspot(email: str, password: str) -> list[dict]:
+def _clean_detail(text: str) -> str:
+    """Verwijdert menu/footer-ruis uit de detailpagina-tekst."""
+    skip = {
+        'Ga naar hoofdinhoud', 'Nieuwe opdrachten', 'Activiteit', 'Contacten',
+        'Mijn account', 'Online Helpdesk', 'Privacy', 'Cookiebeleid',
+        'Cookie instellingen', 'Algemene voorwaarden',
+    }
+    lines = []
+    for l in text.split('\n'):
+        l = l.strip()
+        if not l or l in skip:
+            continue
+        if l.startswith('© 2005'):
+            break
+        lines.append(l)
+    return '\n'.join(lines)
+
+async def scrape_werkspot(email: str, password: str, known_ids: set) -> list[dict]:
     jobs = []
 
     async with async_playwright() as p:
@@ -390,7 +414,7 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             # Dump ook de HTML zodat we de exacte structuur kunnen zien
             page_html = await page.evaluate('() => document.body.innerHTML')
             with open('debug_leads_html.txt', 'w') as f:
-                f.write(page_html[:15000])
+                f.write(page_html[:40000])
             print("📄 HTML opgeslagen als debug_leads_html.txt")
 
             print("🔍 Opdrachten ophalen...")
@@ -404,17 +428,35 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                         seen.add(href);
                         const text  = (container || {}).innerText || '';
                         const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
+
+                        let titel = lines[0] || href;
+                        let categorie = '', locatie = '', geplaatst = '', tag = '';
+                        for (let i = 1; i < lines.length; i++) {
+                            const l = lines[i];
+                            if (/\\(\\s*\\d+\\s*km\\)/.test(l) || l.includes(' km)')) { locatie = l; }
+                            else if (l.includes('geleden')) { geplaatst = l; }
+                            else if (l.toLowerCase().includes('terugkerende klant')) { tag = l; }
+                            else if (!categorie) { categorie = l; }
+                        }
+                        const m = href.match(/create-proposal\\/(\\d+)/);
+                        const id = m ? m[1] : href;
+
                         jobs.push({
-                            id:          href,
-                            title:       lines[0] || href,
-                            description: lines.slice(1).join(' ').substring(0, 500),
-                            url:         href,
+                            id, titel, categorie, locatie, geplaatst, tag,
+                            url: href, omschrijving: '',
                         });
                     };
 
-                    // Strategie 1: bekende href-patronen
+                    // Strategie 1: PRECIES — elke opdracht linkt via
+                    // /service-pro/create-proposal/{ID}. De ID is uniek.
+                    document.querySelectorAll('a[href*="/create-proposal/"]').forEach(el => {
+                        const container = el.closest('[data-platform-tour], li, article, div[class*="card"]') || el.parentElement;
+                        addJob(el.href, container);
+                    });
+
+                    // Strategie 2 (fallback): andere bekende href-patronen
                     const linkSels = [
-                        'a[href*="/service-request"]','a[href*="/service-pro"]',
+                        'a[href*="/service-request"]',
                         'a[href*="/lead"]','a[href*="/opdracht"]','a[href*="/klus"]',
                     ];
                     for (const sel of linkSels) {
@@ -424,9 +466,7 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
                         });
                     }
 
-                    // Strategie 2 (robuust): elke link waarvan de tekst een
-                    // opdrachttitel is. Titels hebben het patroon "Categorie: ..."
-                    // en zijn substantieel van lengte.
+                    // Strategie 3 (laatste vangnet): links met opdracht-titel
                     document.querySelectorAll('a').forEach(el => {
                         const t = (el.innerText || '').trim();
                         if (t.length > 15 && t.includes(':')) {
@@ -441,8 +481,31 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
 
             print(f"📊 {len(page_jobs)} opdrachten gevonden op de pagina")
             for i, job in enumerate(page_jobs):
-                print(f"  [{i+1}] {job.get('title','?')[:70]}")
-                print(f"       {job.get('url','')[:80]}")
+                print(f"  [{i+1}] {job.get('titel','?')[:70]}")
+
+            # ── Detailpagina's ophalen voor NIEUWE opdrachten ──────
+            nieuwe = [j for j in page_jobs if j['id'] not in known_ids]
+            print(f"\n🔎 {len(nieuwe)} nieuwe opdracht(en) — detailpagina's ophalen...")
+
+            for idx, job in enumerate(nieuwe):
+                try:
+                    await page.goto(job['url'], wait_until='domcontentloaded', timeout=20_000)
+                    await page.wait_for_load_state('networkidle', timeout=8_000)
+                    await asyncio.sleep(1)
+
+                    # Eerste detailpagina dumpen voor toekomstige verfijning
+                    if idx == 0:
+                        await page.screenshot(path='debug_detail.png', full_page=True)
+                        dhtml = await page.evaluate('() => document.body.innerHTML')
+                        with open('debug_detail_html.txt', 'w') as f:
+                            f.write(dhtml[:40000])
+
+                    detail_text = await page.evaluate('() => document.body.innerText')
+                    job['omschrijving'] = _clean_detail(detail_text)
+                    print(f"   ✅ Detail opgehaald: {job['titel'][:50]}")
+                except Exception as e:
+                    print(f"   ⚠️  Detail ophalen mislukt: {e}")
+                    job['omschrijving'] = '(detail kon niet opgehaald worden)'
 
             jobs = page_jobs
 
@@ -459,63 +522,68 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
 
 # ─── Hoofdprogramma ──────────────────────────────────────────────────
 async def main():
-    seen_file = 'seen_jobs.json'
-    seen_ids: set[str] = set()
-    if os.path.exists(seen_file):
-        with open(seen_file) as f:
-            seen_ids = set(json.load(f))
-    print(f"📚 {len(seen_ids)} eerder geziene opdrachten geladen")
+    from datetime import datetime
+
+    store_file = 'opdrachten.json'
+    existing: list[dict] = []
+    if os.path.exists(store_file):
+        try:
+            with open(store_file, encoding='utf-8') as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+    known_ids = {j.get('id') for j in existing}
+    print(f"📚 {len(existing)} opdrachten in database, {len(known_ids)} bekende ID's")
 
     email      = os.environ['WERKSPOT_EMAIL']
     password   = os.environ['WERKSPOT_PASSWORD']
     ntfy_topic = os.environ['NTFY_TOPIC']
 
-    jobs = await scrape_werkspot(email, password)
+    # Scrape (haalt details op voor opdrachten die niet in known_ids zitten)
+    scraped = await scrape_werkspot(email, password, known_ids)
 
-    new_ids       = set()
+    # Nieuwe opdrachten = ID niet eerder gezien (in paginavolgorde = nieuwste eerst)
+    nieuwe = [j for j in scraped if j['id'] not in known_ids]
+
     notifications = 0
-    new_count     = 0
+    now_iso = datetime.now().isoformat(timespec='seconds')
 
-    for job in jobs:
-        job_id = job.get('id', '').strip()
-        if not job_id:
-            continue
+    for job in nieuwe:
+        titel = job.get('titel', '')
+        omschrijving = job.get('omschrijving', '')
+        job['gevonden_op'] = now_iso
 
-        new_ids.add(job_id)
+        print(f"\n🆕 Nieuwe opdracht: {titel[:60]}")
 
-        if job_id in seen_ids:
-            continue
+        # Twee-laags relevantiefilter
+        rel = keyword_filter(titel, omschrijving)
+        if rel:
+            rel = groq_is_relevant(titel, omschrijving)
+        job['relevant'] = rel
 
-        new_count += 1
-        title = job.get('title', '')
-        desc  = job.get('description', '')
+        if rel:
+            send_notification(ntfy_topic, job)
+            notifications += 1
+        else:
+            print(f"   ⏭️  Niet relevant")
 
-        print(f"\n🆕 Nieuwe opdracht: {title[:60]}")
-
-        if not keyword_filter(title, desc):
-            print(f"   ⏭️  Laag 1 filter: niet relevant")
-            continue
-
-        if not groq_is_relevant(title, desc):
-            print(f"   ⏭️  Groq: niet relevant")
-            continue
-
-        send_notification(ntfy_topic, job)
-        notifications += 1
+    # Nieuwe opdrachten bovenaan (nieuwste eerst), daarna de bestaande
+    all_records = nieuwe + existing
+    all_records = all_records[:200]  # cap tegen oneindige groei
 
     print(f"\n{'='*50}")
-    print(f"📊 Totaal op pagina : {len(jobs)}")
-    print(f"🆕 Nieuw deze run   : {new_count}")
-    print(f"📬 Notificaties     : {notifications}")
+    print(f"📊 Op pagina      : {len(scraped)}")
+    print(f"🆕 Nieuw deze run : {len(nieuwe)}")
+    print(f"📬 Notificaties   : {notifications}")
+    print(f"💾 Totaal opgeslagen: {len(all_records)}")
     print(f"{'='*50}")
 
-    # Stille heartbeat zodat je in ntfy kunt zien dat de agent actief is
-    send_heartbeat(ntfy_topic, total=len(jobs), new=new_count, notifications=notifications)
+    send_heartbeat(ntfy_topic, total=len(scraped), new=len(nieuwe), notifications=notifications)
 
-    all_ids = list((seen_ids | new_ids))[-1000:]
-    with open(seen_file, 'w') as f:
-        json.dump(all_ids, f)
-    print(f"💾 {len(all_ids)} opdracht-ID's opgeslagen")
+    # Leesbare JSON: indent + Nederlandse tekens behouden
+    with open(store_file, 'w', encoding='utf-8') as f:
+        json.dump(all_records, f, indent=2, ensure_ascii=False)
+    print(f"💾 Opgeslagen in {store_file} (nieuwste bovenaan, leesbaar formaat)")
 
 if __name__ == '__main__':
     asyncio.run(main())
