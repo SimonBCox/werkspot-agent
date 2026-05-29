@@ -387,46 +387,59 @@ async def scrape_werkspot(email: str, password: str) -> list[dict]:
             print(page_text[:1000])
             print("─" * 60)
 
+            # Dump ook de HTML zodat we de exacte structuur kunnen zien
+            page_html = await page.evaluate('() => document.body.innerHTML')
+            with open('debug_leads_html.txt', 'w') as f:
+                f.write(page_html[:15000])
+            print("📄 HTML opgeslagen als debug_leads_html.txt")
+
             print("🔍 Opdrachten ophalen...")
             page_jobs = await page.evaluate('''
                 () => {
                     const jobs = [];
                     const seen = new Set();
-                    const linkSels = ['a[href*="/service-request"]','a[href*="/lead"]','a[href*="/opdracht"]','a[href*="/klus"]'];
+
+                    const addJob = (href, container) => {
+                        if (!href || seen.has(href)) return;
+                        seen.add(href);
+                        const text  = (container || {}).innerText || '';
+                        const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
+                        jobs.push({
+                            id:          href,
+                            title:       lines[0] || href,
+                            description: lines.slice(1).join(' ').substring(0, 500),
+                            url:         href,
+                        });
+                    };
+
+                    // Strategie 1: bekende href-patronen
+                    const linkSels = [
+                        'a[href*="/service-request"]','a[href*="/service-pro"]',
+                        'a[href*="/lead"]','a[href*="/opdracht"]','a[href*="/klus"]',
+                    ];
                     for (const sel of linkSels) {
                         document.querySelectorAll(sel).forEach(el => {
-                            if (seen.has(el.href)) return;
-                            seen.add(el.href);
-                            const container = el.closest('li, article, [class*="card"], [class*="item"], [class*="lead"]') || el.parentElement;
-                            const text  = (container || el).innerText || '';
-                            const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
-                            jobs.push({
-                                id:          el.href,
-                                title:       lines[0] || el.innerText.trim() || el.href,
-                                description: lines.slice(1).join(' ').substring(0, 500),
-                                url:         el.href,
-                            });
+                            const container = el.closest('li, article, div[class*="card"], div[class*="item"], div[class*="request"]') || el.parentElement;
+                            addJob(el.href, container);
                         });
                     }
-                    const cardSels = ['[class*="service-request"]','[class*="request"]','[class*="lead"]','[class*="opdracht"]','[class*="job-card"]','[class*="request-card"]'];
-                    for (const sel of cardSels) {
-                        document.querySelectorAll(sel).forEach(el => {
-                            const link = el.querySelector('a');
-                            const href = link ? link.href : el.getAttribute('data-url') || '';
-                            if (!href || seen.has(href)) return;
-                            seen.add(href);
-                            const text  = el.innerText || '';
-                            const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
-                            jobs.push({ id: href, title: lines[0] || 'Opdracht', description: lines.slice(1).join(' ').substring(0, 500), url: href });
-                        });
-                    }
+
+                    // Strategie 2 (robuust): elke link waarvan de tekst een
+                    // opdrachttitel is. Titels hebben het patroon "Categorie: ..."
+                    // en zijn substantieel van lengte.
+                    document.querySelectorAll('a').forEach(el => {
+                        const t = (el.innerText || '').trim();
+                        if (t.length > 15 && t.includes(':')) {
+                            const container = el.closest('li, article, div[class*="card"], div[class*="item"], div[class*="request"]') || el.parentElement;
+                            addJob(el.href || ('#' + t.substring(0,40)), container);
+                        }
+                    });
+
                     return jobs;
                 }
             ''')
 
             print(f"📊 {len(page_jobs)} opdrachten gevonden op de pagina")
-
-            # Print alle gevonden opdrachten zodat je kunt controleren wat er gevonden wordt
             for i, job in enumerate(page_jobs):
                 print(f"  [{i+1}] {job.get('title','?')[:70]}")
                 print(f"       {job.get('url','')[:80]}")
