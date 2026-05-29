@@ -91,9 +91,9 @@ def send_heartbeat(topic: str, total: int, new: int, notifications: int):
             f'https://ntfy.sh/{topic}',
             data=f"Gevonden op pagina: {total} | Nieuw: {new} | Notificaties: {notifications}".encode('utf-8'),
             headers={
-                'Title':    '🔍 Werkspot scan voltooid',
+                'Title':    'Werkspot scan voltooid',
                 'Priority': 'min',    # geen geluid, alleen zichtbaar in notificatiebalk
-                'Tags':     'white_check_mark',
+                'Tags':     'mag',
             },
             timeout=10,
         )
@@ -121,14 +121,17 @@ def send_notification(topic: str, job: dict):
         body += '   '.join(extra) + '\n'
     body += '\n' + omschrijving + f"\n\n🔗 {url}"
 
+    # HTTP-headers accepteren geen emoji (latin-1). Maak de titel veilig.
+    safe_title = title.encode('latin-1', 'replace').decode('latin-1')
+
     try:
         r = requests.post(
             f'https://ntfy.sh/{topic}',
             data=body.encode('utf-8'),
             headers={
-                'Title':    f'🔨 {title}',
+                'Title':    safe_title,
                 'Priority': 'urgent',
-                'Tags':     'triangular_ruler,bell',
+                'Tags':     'hammer,bell',
                 'Click':    url,
                 'Sound':    'default',
             },
@@ -580,10 +583,11 @@ async def main():
 
     for job in nieuwe:
         titel = job.get('titel', '')
+        categorie = job.get('categorie', '')
         # Combineer alle beschikbare info voor een betere relevantiecheck
         details = job.get('details', {})
         context = ' '.join([
-            job.get('categorie', ''),
+            categorie,
             ' '.join(f"{k}: {v}" for k, v in details.items()),
             job.get('omschrijving', ''),
         ])
@@ -591,10 +595,19 @@ async def main():
 
         print(f"\n🆕 Nieuwe opdracht: {titel[:60]}")
 
-        # Twee-laags relevantiefilter
-        rel = keyword_filter(titel, context)
-        if rel:
-            rel = groq_is_relevant(titel, context)
+        # Relevantiebepaling:
+        cat_t = (titel + ' ' + categorie).lower()
+        if 'constructieberekening' in cat_t:
+            # Kernwerk — altijd relevant, geen Groq nodig
+            rel = True
+            print("   ✅ Constructieberekening → direct relevant")
+        else:
+            # Andere categorie (bv. 'Bouw- en constructietekening'):
+            # eerst trefwoorden, dan Groq als scheidsrechter
+            rel = keyword_filter(titel, context)
+            if rel:
+                rel = groq_is_relevant(titel, context)
+
         job['relevant'] = rel
 
         if rel:
