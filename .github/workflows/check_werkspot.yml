@@ -2,7 +2,11 @@ name: Check Werkspot Leads
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # Elke 15 minuten
+    # Draait elke 15 min binnen 06:00-20:45 UTC. Dit venster dekt de
+    # Nederlandse actieve uren in zowel zomer- als wintertijd; de exacte
+    # tijden (weekdag 08:00-21:30, weekend 09:00-21:00) worden in de
+    # Python-code bepaald met de Europe/Amsterdam tijdzone.
+    - cron: '*/15 6-20 * * *'
   workflow_dispatch:           # Handmatig starten (voor testen)
 
 permissions:
