@@ -42,23 +42,31 @@ def groq_is_relevant(title: str, description: str) -> bool:
         print("⚠️  Geen GROQ_API_KEY — alleen trefwoordfilter gebruikt")
         return True
 
-    prompt = f"""Je bent een assistent die opdrachten beoordeelt voor een zelfstandig constructeur.
-Deze constructeur doet uitsluitend:
-- Constructieberekeningen van draagmuren (doorbraken, muren weghalen)
-- Constructieberekeningen voor uitbouwen en aanbouwen
-- Combinaties van bouwtekeningen + constructieberekeningen
+    prompt = f"""Je beoordeelt opdrachten voor een zelfstandig constructeur.
 
-Hij doet NIET:
-- Puur tekenwerk zonder berekening
-- Verbouwingen of aannemerwerk
-- Elektra, loodgieterswerk, schilderwerk etc.
+DE ENIGE VRAAG DIE TELT: wordt er (mede) om een CONSTRUCTIEVE BEREKENING gevraagd?
 
-Beoordeel de onderstaande opdracht. Antwoord uitsluitend met JA of NEE.
+Antwoord JA als de opdracht vraagt om bijvoorbeeld:
+- een constructieberekening / sterkteberekening / statische berekening
+- berekening voor het verwijderen of aanpassen van een draagmuur of dragende muur (doorbraak)
+- berekening voor een uitbouw, aanbouw, opbouw of dakopbouw
+- berekening van een fundering, ligger, balk of staalconstructie
+- een combinatie van bouwtekening EN berekening
+Een opdracht die zowel tekenwerk als een berekening vraagt = JA.
+
+Antwoord NEE als er GEEN berekening gevraagd wordt, bijvoorbeeld bij:
+- alleen tekenwerk / alleen een bouwtekening zonder berekening
+- ruimtelijke onderbouwing, vergunningsaanvraag, planologisch werk, bestemmingsplan
+- alleen advies, offerte voor de bouw zelf, of aannemerwerk
+- elektra, loodgieterswerk, schilderwerk, isolatie e.d.
+
+Bij twijfel of er een berekening nodig is terwijl het duidelijk om een
+draagmuur, uitbouw of dragende constructie gaat: antwoord JA.
+
+Beoordeel nu deze opdracht en antwoord met UITSLUITEND "JA" of "NEE":
 
 Titel: {title}
-Omschrijving: {description}
-
-Is dit relevant voor deze constructeur?"""
+Omschrijving / details: {description}"""
 
     try:
         response = requests.post(
@@ -634,19 +642,10 @@ async def main():
 
         print(f"\n🆕 Nieuwe opdracht: {titel[:60]}")
 
-        # Relevantiebepaling:
-        cat_t = (titel + ' ' + categorie).lower()
-        if 'constructieberekening' in cat_t:
-            # Kernwerk — altijd relevant, geen Groq nodig
-            rel = True
-            print("   ✅ Constructieberekening → direct relevant")
-        else:
-            # Andere categorie (bv. 'Bouw- en constructietekening'):
-            # eerst trefwoorden, dan Groq als scheidsrechter
-            rel = keyword_filter(titel, context)
-            if rel:
-                rel = groq_is_relevant(titel, context)
-
+        # Relevantie: Groq beoordeelt of er om een berekening wordt gevraagd.
+        # De trefwoordfilter is een snelle voorcheck die overduidelijke
+        # niet-bouwopdrachten alvast wegneemt; bij twijfel beslist Groq.
+        rel = groq_is_relevant(titel, context)
         job['relevant'] = rel
 
         if rel:
