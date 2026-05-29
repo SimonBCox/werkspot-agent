@@ -111,8 +111,15 @@ def send_notification(topic: str, job: dict):
 
     body = ''
     if locatie or geplaatst:
-        body += f"📍 {locatie}   🕐 {geplaatst}\n\n"
-    body += omschrijving + f"\n\n🔗 {url}"
+        body += f"📍 {locatie}   🕐 {geplaatst}\n"
+    extra = []
+    if job.get('leadprijs'):
+        extra.append(f"💶 {job['leadprijs']}")
+    if job.get('populariteit'):
+        extra.append(f"👥 {job['populariteit']}")
+    if extra:
+        body += '   '.join(extra) + '\n'
+    body += '\n' + omschrijving + f"\n\n🔗 {url}"
 
     try:
         r = requests.post(
@@ -500,8 +507,31 @@ async def scrape_werkspot(email: str, password: str, known_ids: set) -> list[dic
                         with open('debug_detail_html.txt', 'w') as f:
                             f.write(dhtml[:40000])
 
-                    detail_text = await page.evaluate('() => document.body.innerText')
-                    job['omschrijving'] = _clean_detail(detail_text)
+                    # Gestructureerde velden uitlezen (dt/dd tabel + extra's)
+                    detail = await page.evaluate('''
+                        () => {
+                            const result = { details: {}, leadprijs: '', populariteit: '' };
+                            document.querySelectorAll('dt').forEach(dt => {
+                                const key = (dt.innerText || '').replace(/:\\s*$/, '').trim();
+                                const dd = dt.nextElementSibling;
+                                if (key && dd && dd.tagName === 'DD') {
+                                    result.details[key] = (dd.innerText || '').trim();
+                                }
+                            });
+                            const bt = document.body.innerText || '';
+                            const lead = bt.match(/Leadprijs\\s*€\\s*([\\d.,]+)/);
+                            if (lead) result.leadprijs = '€ ' + lead[1];
+                            const pop = bt.match(/(\\d+)\\s*vakmensen hebben interesse/);
+                            if (pop) result.populariteit = pop[1] + ' geïnteresseerd';
+                            return result;
+                        }
+                    ''')
+
+                    job['details']       = detail.get('details', {})
+                    job['leadprijs']     = detail.get('leadprijs', '')
+                    job['populariteit']  = detail.get('populariteit', '')
+                    # De echte klantomschrijving zit in "Aanvullende informatie"
+                    job['omschrijving']  = detail.get('details', {}).get('Aanvullende informatie', '')
                     print(f"   ✅ Detail opgehaald: {job['titel'][:50]}")
                 except Exception as e:
                     print(f"   ⚠️  Detail ophalen mislukt: {e}")
@@ -550,15 +580,21 @@ async def main():
 
     for job in nieuwe:
         titel = job.get('titel', '')
-        omschrijving = job.get('omschrijving', '')
+        # Combineer alle beschikbare info voor een betere relevantiecheck
+        details = job.get('details', {})
+        context = ' '.join([
+            job.get('categorie', ''),
+            ' '.join(f"{k}: {v}" for k, v in details.items()),
+            job.get('omschrijving', ''),
+        ])
         job['gevonden_op'] = now_iso
 
         print(f"\n🆕 Nieuwe opdracht: {titel[:60]}")
 
         # Twee-laags relevantiefilter
-        rel = keyword_filter(titel, omschrijving)
+        rel = keyword_filter(titel, context)
         if rel:
-            rel = groq_is_relevant(titel, omschrijving)
+            rel = groq_is_relevant(titel, context)
         job['relevant'] = rel
 
         if rel:
