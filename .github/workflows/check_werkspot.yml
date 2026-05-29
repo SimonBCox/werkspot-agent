@@ -74,6 +74,6 @@ jobs:
         run: |
           git config user.name  "werkspot-bot"
           git config user.email "werkspot-bot@users.noreply.github.com"
-          git add seen_jobs.json
-          git diff --staged --quiet || git commit -m "chore: update seen jobs [skip ci]"
+          git add opdrachten.json seen_jobs.json 2>/dev/null || git add opdrachten.json
+          git diff --staged --quiet || git commit -m "chore: update opdrachten [skip ci]"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
