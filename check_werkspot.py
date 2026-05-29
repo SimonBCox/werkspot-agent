@@ -36,11 +36,12 @@ def keyword_filter(title: str, description: str) -> bool:
     return any(k in text for k in RELEVANT_KEYWORDS)
 
 # ─── Laag 2: Groq AI analyse ─────────────────────────────────────────
-def groq_is_relevant(title: str, description: str) -> bool:
+def groq_is_relevant(title: str, description: str) -> tuple[bool, str]:
+    """Geeft (relevant, reden) terug."""
     api_key = os.environ.get('GROQ_API_KEY', '')
     if not api_key:
-        print("⚠️  Geen GROQ_API_KEY — alleen trefwoordfilter gebruikt")
-        return True
+        print("⚠️  Geen GROQ_API_KEY — alles doorgestuurd")
+        return True, 'geen Groq-key, standaard doorgestuurd'
 
     prompt = f"""Je beoordeelt opdrachten voor een zelfstandig constructeur.
 
@@ -63,7 +64,10 @@ Antwoord NEE als er GEEN berekening gevraagd wordt, bijvoorbeeld bij:
 Bij twijfel of er een berekening nodig is terwijl het duidelijk om een
 draagmuur, uitbouw of dragende constructie gaat: antwoord JA.
 
-Beoordeel nu deze opdracht en antwoord met UITSLUITEND "JA" of "NEE":
+Antwoord in EXACT dit formaat, op één regel:
+JA|<korte reden van max 12 woorden>
+of
+NEE|<korte reden van max 12 woorden>
 
 Titel: {title}
 Omschrijving / details: {description}"""
@@ -78,18 +82,23 @@ Omschrijving / details: {description}"""
             json={
                 'model': 'llama-3.1-8b-instant',
                 'messages': [{'role': 'user', 'content': prompt}],
-                'max_tokens': 10,
+                'max_tokens': 40,
                 'temperature': 0,
             },
             timeout=15,
         )
         response.raise_for_status()
-        answer = response.json()['choices'][0]['message']['content'].strip().upper()
-        print(f"🤖 Groq zegt: {answer} — {title[:50]}")
-        return answer.startswith('JA')
+        raw = response.json()['choices'][0]['message']['content'].strip()
+
+        # Verwacht "JA|reden" of "NEE|reden"
+        besluit, _, reden = raw.partition('|')
+        relevant = besluit.strip().upper().startswith('JA')
+        reden = reden.strip() or '(geen reden gegeven)'
+        print(f"🤖 Groq: {'JA' if relevant else 'NEE'} — {reden} — {title[:45]}")
+        return relevant, reden
     except Exception as e:
-        print(f"⚠️  Groq fout: {e} — doorsturen op basis van trefwoorden")
-        return True
+        print(f"⚠️  Groq fout: {e} — doorgestuurd")
+        return True, f'Groq-fout, standaard doorgestuurd ({e})'
 
 # ─── Actieve uren (Nederlandse tijd, incl. zomer/wintertijd) ─────────
 def binnen_actieve_uren() -> bool:
@@ -157,6 +166,8 @@ def send_notification(topic: str, job: dict):
         extra.append(f"👥 {job['populariteit']}")
     if extra:
         body += '   '.join(extra) + '\n'
+    if job.get('reden'):
+        body += f"🤖 {job['reden']}\n"
     body += '\n' + omschrijving + f"\n\n🔗 {url}"
 
     # HTTP-headers accepteren geen emoji (latin-1). Maak de titel veilig
@@ -642,17 +653,17 @@ async def main():
 
         print(f"\n🆕 Nieuwe opdracht: {titel[:60]}")
 
-        # Relevantie: Groq beoordeelt of er om een berekening wordt gevraagd.
-        # De trefwoordfilter is een snelle voorcheck die overduidelijke
-        # niet-bouwopdrachten alvast wegneemt; bij twijfel beslist Groq.
-        rel = groq_is_relevant(titel, context)
+        # Relevantie: Groq beoordeelt of er om een berekening wordt gevraagd
+        # en geeft een korte onderbouwing terug.
+        rel, reden = groq_is_relevant(titel, context)
         job['relevant'] = rel
+        job['reden'] = reden
 
         if rel:
             send_notification(ntfy_topic, job)
             notifications += 1
         else:
-            print(f"   ⏭️  Niet relevant")
+            print(f"   ⏭️  Niet relevant: {reden}")
 
     # Nieuwe opdrachten bovenaan (nieuwste eerst), daarna de bestaande
     all_records = nieuwe + existing
