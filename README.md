@@ -3,7 +3,7 @@
 Controleert elke 15 minuten Werkspot op nieuwe relevante opdrachten en stuurt een pushmelding naar je telefoon via **ntfy**.
 
 ---
-
+ 
 ## Installatie (±10 minuten)
 
 ### Stap 1 – Maak een nieuw GitHub repo aan
