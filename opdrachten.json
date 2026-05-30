@@ -1,5 +1,55 @@
 [
   {
+    "id": "7064179",
+    "titel": "Bouw- en constructietekening: Situatie , Gevel , Detail tekeningen...",
+    "categorie": "Bouw- en constructietekening",
+    "locatie": "Helmond (37 km)",
+    "geplaatst": "3 uur geleden",
+    "tag": "",
+    "url": "https://www.werkspot.nl/service-pro/create-proposal/7064179",
+    "omschrijving": "We hebben de ouwe ramen, kozijnen en deuren vervangen voor nieuwe. Er moeten voor de vergunning Situatie , Gevel , Detail tekeningen komen.",
+    "details": {
+      "Type klus": "Bouw- en constructietekening",
+      "Constructie": "Situatie , Gevel , Detail tekeningen maken voor voorzijde huis na vervangen ouwe ramen en kozijnen naar nieuwe ramen en kozijnen",
+      "Soort woning": "Huis",
+      "Bouwtekening huidige toestand aanwezig": "Nee",
+      "Vergunning aanwezig": "Nee",
+      "Uitvoer datum": "In overleg",
+      "Opdrachtnummer": "7064179",
+      "Aanvullende informatie": "We hebben de ouwe ramen, kozijnen en deuren vervangen voor nieuwe. Er moeten voor de vergunning Situatie , Gevel , Detail tekeningen komen."
+    },
+    "leadprijs": "€ 18,00",
+    "populariteit": "5 geïnteresseerd",
+    "gevonden_op": "2026-05-30T14:53:05",
+    "relevant": false,
+    "reden": "Alleen tekenwerk voor vergunningaanvraag, geen berekening vereist."
+  },
+  {
+    "id": "7064084",
+    "titel": "Bouw- en constructietekening: 200 m²; Nieuw gebouw",
+    "categorie": "Bouw- en constructietekening",
+    "locatie": "Deventer (55 km)",
+    "geplaatst": "4 uur geleden",
+    "tag": "",
+    "url": "https://www.werkspot.nl/service-pro/create-proposal/7064084",
+    "omschrijving": "",
+    "details": {
+      "Type klus": "Bouw- en constructietekening",
+      "Constructie": "Nieuw gebouw",
+      "Oppervlakte in m²": "200",
+      "Soort woning": "Huis",
+      "Bouwtekening huidige toestand aanwezig": "Nieuwbouw",
+      "Vergunning aanwezig": "Ja",
+      "Uitvoer datum": "Met spoed",
+      "Opdrachtnummer": "7064084"
+    },
+    "leadprijs": "€ 17,00",
+    "populariteit": "4 geïnteresseerd",
+    "gevonden_op": "2026-05-30T14:53:05",
+    "relevant": true,
+    "reden": "Berekening voor nieuwbouwconstructie noodzakelijk."
+  },
+  {
     "id": "7063476",
     "titel": "Constructieberekeningen: 16 m²; Aanbouw",
     "categorie": "Constructieberekeningen",
